@@ -17,7 +17,7 @@ from .eg_md import multimsg_md, astrbot_md
     "v1.0.0",
 )
 class MultimsgPlugin(Star):
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context):
         super().__init__(context)
 
     async def send(
