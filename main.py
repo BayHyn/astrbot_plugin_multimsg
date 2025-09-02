@@ -1,7 +1,7 @@
 import random
+from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, register
-from astrbot.core import AstrBotConfig
 from astrbot.core.message.components import At, Plain, Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -14,10 +14,10 @@ from .eg_md import multimsg_md, astrbot_md
     "astrbot_plugin_multimsg",
     "Zhalslar",
     "Multimsg插件",
-    "v1.0.0",
+    "v1.0.1",
 )
 class MultimsgPlugin(Star):
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context):
         super().__init__(context)
 
     async def send(
@@ -31,15 +31,19 @@ class MultimsgPlugin(Star):
             payload["group_id"] = int(event.get_group_id())
             action = "send_group_forward_msg" if forward else "send_group_msg"
 
-        result = await event.bot.api.call_action(action, **payload)
-        event.stop_event()
-        return result
+        try:
+            result = await event.bot.api.call_action(action, **payload)
+            event.stop_event()
+            return result
+        except Exception as e:
+            logger.error(f"[MultimsgPlugin] 调用 {action} 出错: {e}")
+            return None
 
     @filter.command("text")
     async def send_text(self, event: AiocqhttpMessageEvent):
         """text <文本>"""
         text = event.message_str.removeprefix("text").strip()
-        payload = {"messages": [{"type": "text", "data": {"text": text}}]}
+        payload = {"message": [{"type": "text", "data": {"text": text}}]}
         await self.send(event, payload)
 
     @filter.command("face")
@@ -56,22 +60,22 @@ class MultimsgPlugin(Star):
 
         if isinstance(face_id, str) and "~" in face_id:
             start, end = map(int, face_id.split("~"))
-            messages = [_face(i) for i in range(start, end + 1) for _ in range(count)]
+            message = [_face(i) for i in range(start, end + 1) for _ in range(count)]
         else:
             fid = face_id if isinstance(face_id, int) else random.randint(1, 500)
-            messages = [_face(int(fid)) for _ in range(count)]
+            message = [_face(int(fid)) for _ in range(count)]
 
-        await self.send(event, {"messages": messages})
+        await self.send(event, {"message": message})
 
     @filter.command("dice", alias={"骰子"})
     async def send_dice(self, event: AiocqhttpMessageEvent):
-        payload = {"messages": [{"type": "dice"}]}
+        payload = {"message": [{"type": "dice"}]}
         await self.send(event, payload)
 
     @filter.command("rps", alias={"猜拳", "石头", "剪刀", "布"})
     async def send_rps(self, event: AiocqhttpMessageEvent):
         """猜拳|石头|剪刀|布"""
-        payload = {"messages": [{"type": "rps"}]}
+        payload = {"message": [{"type": "rps"}]}
         await self.send(event, payload)
 
     @filter.command("at", alias={"@"})
@@ -86,7 +90,7 @@ class MultimsgPlugin(Star):
         group_id = int(event.get_group_id())
         self_id = int(event.get_self_id())
         user_ids = get_ats(event)
-        messages: list[dict] = []
+        message: list[dict] = []
 
         match qq:
             case "all" | "全员" | "全体成员":
@@ -98,28 +102,30 @@ class MultimsgPlugin(Star):
                     )
                 ).get("role")
 
-                if role not in {"owner", "admin"}:
+                if role in {"owner", "admin"}:
+                    # 有权限 → 直接全体
+                    message.append(at_msg("all"))
+                else:
+                    # 没权限 → 一个个 @
                     members = await event.bot.get_group_member_list(group_id=group_id)
-                    messages.extend(
+                    message.extend(
                         at_msg(m["user_id"]) for m in members if m.get("user_id")
                     )
-                else:
-                    messages.append(at_msg("all"))
 
             case s if s and str(s).isdigit():
-                messages.append(at_msg(s))
+                message.append(at_msg(s))
 
             case _ if user_ids:
-                messages.extend(at_msg(uid) for uid in user_ids)
+                message.extend(at_msg(uid) for uid in user_ids)
 
             case _:
                 result: dict = await event.bot.get_group_msg_history(group_id=group_id)
                 target_ids = [
                     msg["sender"]["user_id"] for msg in result.get("messages", [])
                 ]
-                messages.extend(at_msg(uid) for uid in set(target_ids[: count + 1]))
+                message.extend(at_msg(uid) for uid in set(target_ids[: count + 1]))
 
-        await self.send(event, {"messages": messages})
+        await self.send(event, {"message": message})
 
     @filter.command("contact", alias={"推荐"})
     async def contact(self, event: AiocqhttpMessageEvent):
@@ -191,7 +197,7 @@ class MultimsgPlugin(Star):
         sender_name = event.get_sender_name()
         content = content or random.choice([multimsg_md, astrbot_md])
         payload = {
-            "messages": [
+            "message": [
                 {
                     "type": "node",
                     "data": {
@@ -236,15 +242,12 @@ class MultimsgPlugin(Star):
                     )
 
                     source = source or "合并转发"
-                    news = (
-                        None
-                        if source is None
-                        else (
-                            [{"text": ""}]
-                            if news_text == "0"
-                            else [{"text": news_text}]
-                        )
-                    )
+                    if not news_text:
+                        news = None
+                    elif news_text == "0":
+                        news = [{"text": ""}]
+                    else:
+                        news = [{"text": news_text}]
 
                 case At(qq=qq, name=name):
                     user_id, nickname = int(qq), name
@@ -256,7 +259,7 @@ class MultimsgPlugin(Star):
             return
 
         payload = {
-            "messages": [
+            "message": [
                 {
                     "type": "node",
                     "data": {
@@ -289,15 +292,21 @@ class MultimsgPlugin(Star):
         )
         if user_ids:
             for uid in user_ids:
-                await event.bot.forward_friend_single_msg(
-                    user_id=int(uid), message_id=message_id
-                )
+                try:
+                    await event.bot.forward_friend_single_msg(
+                        user_id=int(uid), message_id=message_id
+                    )
+                except Exception as e:
+                    logger.error(f"[MultimsgPlugin] 转发到好友 {uid} 出错: {e}")
             return
         else:
             group_id = tid if tid and str(tid).isdigit() else event.get_group_id()
-            await event.bot.forward_group_single_msg(
-                group_id=int(group_id), message_id=message_id
-            )
+            try:
+                await event.bot.forward_group_single_msg(
+                    group_id=int(group_id), message_id=message_id
+                )
+            except Exception as e:
+                logger.error(f"[MultimsgPlugin] 转发到群 {group_id} 出错: {e}")
         event.stop_event()
         return
 
