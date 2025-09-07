@@ -14,7 +14,7 @@ from .eg_md import multimsg_md, astrbot_md
     "astrbot_plugin_multimsg",
     "Zhalslar",
     "Multimsg插件",
-    "v1.0.1",
+    "v1.0.2",
 )
 class MultimsgPlugin(Star):
     def __init__(self, context: Context):
@@ -80,7 +80,10 @@ class MultimsgPlugin(Star):
 
     @filter.command("at", alias={"@"})
     async def send_at(
-        self, event: AiocqhttpMessageEvent, qq: str | int | None = None, count: int = 3
+        self,
+        event: AiocqhttpMessageEvent,
+        qq: str | int | None = None,
+        text: str | None = None,
     ):
         """at QQ|@某人|all"""
 
@@ -123,8 +126,9 @@ class MultimsgPlugin(Star):
                 target_ids = [
                     msg["sender"]["user_id"] for msg in result.get("messages", [])
                 ]
-                message.extend(at_msg(uid) for uid in set(target_ids[: count + 1]))
-
+                message.extend(at_msg(uid) for uid in set(target_ids))
+        if text:
+            message.append({"type": "text", "data": {"text": " "+text}})
         await self.send(event, {"message": message})
 
     @filter.command("contact", alias={"推荐"})
@@ -231,6 +235,7 @@ class MultimsgPlugin(Star):
     @filter.command("node")
     async def send_node(self, event: AiocqhttpMessageEvent):
         """(引用消息)node 标题 内容"""
+        print(event.message_obj.message)
         source = news = prompt = summary = None
         user_id = nickname = reply_id = None
 
